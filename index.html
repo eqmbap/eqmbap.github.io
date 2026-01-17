@@ -3,137 +3,175 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Termometr DIY</title>
+    <title>Domowe Centrum Klimatu</title>
     <style>
-        body { font-family: monospace; background: #222; color: #0f0; padding: 20px; }
-        .data-box { border: 1px solid #444; padding: 15px; margin-top: 20px; border-radius: 8px; }
-        h1 { margin: 0 0 10px 0; font-size: 1.2rem; color: #fff; }
-        .value { font-size: 2.5rem; font-weight: bold; }
-        .label { color: #888; font-size: 0.9rem; }
-        button { background: #007bff; color: white; border: none; padding: 12px 24px; font-size: 1rem; border-radius: 5px; cursor: pointer; width: 100%; }
-        #log { font-size: 0.8rem; color: #666; margin-top: 20px; height: 100px; overflow-y: scroll; border-top: 1px solid #333; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background: #1a1a1a; color: #e0e0e0; padding: 20px; margin: 0; }
+        header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+        h1 { margin: 0; font-size: 1.2rem; }
+        
+        button { background: #2196F3; color: white; border: none; padding: 10px 20px; border-radius: 6px; font-weight: bold; cursor: pointer; }
+        button#resumeBtn { background: #4CAF50; display: none; margin-right: 10px; }
+        
+        #grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 15px; }
+        
+        .card { background: #2d2d2d; border-radius: 12px; padding: 15px; box-shadow: 0 4px 6px rgba(0,0,0,0.3); position: relative; transition: transform 0.2s; }
+        .card:hover { transform: translateY(-2px); }
+        .card-header { font-size: 0.8rem; color: #888; margin-bottom: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        
+        .temp-val { font-size: 2.2rem; font-weight: 700; color: #fff; }
+        .unit { font-size: 1rem; color: #aaa; font-weight: normal; }
+        
+        .details { display: flex; justify-content: space-between; margin-top: 15px; font-size: 0.9rem; color: #bbb; }
+        .batt-low { color: #ff5252; }
+        
+        .updated { position: absolute; top: 10px; right: 10px; width: 8px; height: 8px; background: #4CAF50; border-radius: 50%; animation: pulse 2s infinite; }
+        @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.3; } 100% { opacity: 1; } }
+        
+        #log { margin-top: 30px; font-family: monospace; font-size: 0.75rem; color: #555; border-top: 1px solid #333; padding-top: 10px; }
     </style>
 </head>
 <body>
 
-    <button id="scanBtn">START SCANNING 4</button>
+    <header>
+        <h1>Moje Czujniki</h1>
+        <div>
+            <button id="resumeBtn">WZNAWIANIE...</button>
+            <button id="addBtn">+ DODAJ</button>
+        </div>
+    </header>
 
-    <div id="display" style="display:none;">
-        <div class="data-box">
-            <div class="label">Temperatura</div>
-            <div class="value"><span id="temp">--</span>°C</div>
-        </div>
-        <div class="data-box">
-            <div class="label">Wilgotność</div>
-            <div class="value"><span id="hum">--</span>%</div>
-        </div>
-        <div class="data-box">
-            <div class="label">Bateria</div>
-            <div class="value" style="font-size: 1.5rem;"><span id="batt">--</span>% (<span id="volt">--</span>mV)</div>
-        </div>
-        <div class="label" style="margin-top:10px;">Ostatni odczyt: <span id="lastup">--</span></div>
+    <div id="grid">
+        <!-- Kafelki pojawią się tutaj -->
     </div>
 
-    <div id="log"></div>
+    <div id="log">Log systemowy...</div>
 
-<script>
-        const scanBtn = document.getElementById('scanBtn');
-        const logDiv = document.getElementById('log');
+    <script>
+        const knownDevices = new Map(); // Przechowujemy obiekty urządzeń
 
-        // Funkcja pomocnicza do wyświetlania bajtów
-        function buf2hex(buffer) { 
-            return [...new Uint8Array(buffer)]
-                .map(x => x.toString(16).padStart(2, '0'))
-                .join(' ');
-        }
-
-        const log = (msg) => {
-            const time = new Date().toLocaleTimeString();
-            // Logujemy na górze, żeby nie przewijać
-            logDiv.innerHTML = `[${time}] ${msg}<br>` + logDiv.innerHTML;
-        };
-
-        scanBtn.addEventListener('click', async () => {
-            try {
-                log('Startowanie...');
-                
-                // ZMIANA STRATEGII: Filtrujemy GŁÓWNIE po serwisie 0x181a.
-                // To wymusi na Chrome szukanie pakietów z danymi, a nie tylko nazwą.
-                const device = await navigator.bluetooth.requestDevice({
-                    acceptAllDevices: true, 
-                    optionalServices: [0x181a]
-                });
-
-                log(`Wybrano: ${device.name} (ID: ${device.id.slice(0,5)}...)`);
-                
-                document.getElementById('display').style.display = 'block';
-                scanBtn.style.display = 'none';
-
-                device.addEventListener('advertisementreceived', (event) => {
-                    // DIAGNOSTYKA: Wypiszmy wszystko co przyszło
-                    // log(`Odebrano ramkę! RSSI: ${event.rssi}`);
-                    
-                    const serviceData = event.serviceData;
-
-                    // Iterujemy po wszystkich serwisach w ramce
-                    serviceData.forEach((value, key) => {
-                        // key to UUID (zazwyczaj długi string)
-                        if (key.includes('181a')) {
-                            // log(`Mamy 181a! RAW: ${buf2hex(value.buffer)}`);
-                            parseATC1441(value);
-                        } else {
-                            log(`Inny serwis: ${key}`);
-                        }
-                    });
-                });
-
-                await device.watchAdvertisements();
-                log('Zarejestrowano Watcher. Czekam na dane...');
-
-            } catch (error) {
-                log(`BŁĄD: ${error}`);
-            }
-        });
-
-        function parseATC1441(dataView) {
-            // Oczekujemy min. 13 bajtów w formacie ATC1441
-            // Bajt 0-5: MAC
-            // Bajt 6-7: Temp
-            // Bajt 8: Humi
-            // Bajt 9: Batt
-            // Bajt 10-11: Volt
-            
-            if (dataView.byteLength < 10) {
-                log(`Za krótki pakiet: ${dataView.byteLength}B`);
+        // === 1. Funkcja startowa (Persistence) ===
+        // Sprawdza, czy mamy już jakieś zapamiętane urządzenia
+        async function init() {
+            if (!navigator.bluetooth) {
+                log("Twoja przeglądarka nie obsługuje Web Bluetooth.");
                 return;
             }
 
             try {
-                // Konwersja Big Endian (false w drugim argumencie)
-                const tempRaw = dataView.getInt16(6, false); 
-                const temp = tempRaw / 10;
-                
-                const hum = dataView.getUint8(8);
-                const batt = dataView.getUint8(9);
-                const volt = dataView.getUint16(10, false);
-
-                // Aktualizacja UI
-                updateUI(temp, hum, batt, volt);
-                
-                // Opcjonalnie: loguj raz na jakiś czas dla pewności
-                // log(`Odczyt: ${temp}°C / ${hum}%`);
-
+                // Pobierz listę już dozwolonych urządzeń
+                const devices = await navigator.bluetooth.getDevices();
+                if (devices.length > 0) {
+                    log(`Znaleziono ${devices.length} zapamiętanych urządzeń.`);
+                    const resumeBtn = document.getElementById('resumeBtn');
+                    resumeBtn.style.display = 'inline-block';
+                    resumeBtn.innerText = `WZNÓW (${devices.length})`;
+                    
+                    resumeBtn.onclick = () => {
+                        devices.forEach(device => startWatching(device));
+                        resumeBtn.style.display = 'none';
+                    };
+                }
             } catch (e) {
-                log(`Błąd parsowania: ${e}`);
+                console.error(e);
             }
         }
+        init();
 
-        function updateUI(temp, hum, batt, volt) {
-            document.getElementById('temp').innerText = temp.toFixed(1);
-            document.getElementById('hum').innerText = hum;
-            document.getElementById('batt').innerText = batt;
-            document.getElementById('volt').innerText = volt;
-            document.getElementById('lastup').innerText = new Date().toLocaleTimeString();
+        // === 2. Dodawanie nowego urządzenia ===
+        document.getElementById('addBtn').addEventListener('click', async () => {
+            try {
+                const device = await navigator.bluetooth.requestDevice({
+                    acceptAllDevices: true, 
+                    optionalServices: [0x181a]
+                });
+                startWatching(device);
+            } catch (error) {
+                log(`Anulowano lub błąd: ${error}`);
+            }
+        });
+
+        // === 3. Logika Nasłuchiwania ===
+        async function startWatching(device) {
+            // Zapobiegaj duplikatom nasłuchiwania
+            if (knownDevices.has(device.id)) return;
+            
+            log(`Start nasłuchiwania: ${device.name || 'Unnamed'} (${device.id})`);
+            knownDevices.set(device.id, device);
+            createCard(device.id, device.name); // Tworzymy pusty kafelek
+
+            device.addEventListener('advertisementreceived', (event) => {
+                // Szukamy danych 0x181a
+                const serviceData = event.serviceData;
+                let dataView = null;
+                
+                // Szukanie "luźne" po fragmencie UUID
+                serviceData.forEach((value, key) => {
+                    if (key.includes('181a')) dataView = value;
+                });
+
+                if (dataView) {
+                    parseData(device.id, dataView);
+                }
+            });
+
+            // AbortController pozwalałby zatrzymać, tu puszczamy w nieskończoność
+            await device.watchAdvertisements();
+        }
+
+        // === 4. Parsowanie i UI ===
+        function parseData(deviceId, dataView) {
+            if (dataView.byteLength < 10) return;
+
+            // Format ATC1441
+            const temp = dataView.getInt16(6, false) / 10;
+            const hum = dataView.getUint8(8);
+            const batt = dataView.getUint8(9);
+            const volt = dataView.getUint16(10, false);
+
+            updateCard(deviceId, temp, hum, batt, volt);
+        }
+
+        function createCard(id, name) {
+            const grid = document.getElementById('grid');
+            // Jeśli kafelek już jest, nie rób nic (np. przy przeładowaniu)
+            if (document.getElementById(`card-${id}`)) return;
+
+            const div = document.createElement('div');
+            div.className = 'card';
+            div.id = `card-${id}`;
+            div.innerHTML = `
+                <div class="updated"></div>
+                <div class="card-header">${name || 'Czujnik ' + id.slice(0,4)}</div>
+                <div class="temp-val">--<span class="unit">°C</span></div>
+                <div class="details">
+                    <div>💧 <span class="hum-val">--</span>%</div>
+                    <div class="batt-val">🔋 --%</div>
+                </div>
+            `;
+            grid.appendChild(div);
+        }
+
+        function updateCard(id, temp, hum, batt, volt) {
+            const card = document.getElementById(`card-${id}`);
+            if (!card) return;
+
+            card.querySelector('.temp-val').innerHTML = `${temp.toFixed(1)}<span class="unit">°C</span>`;
+            card.querySelector('.hum-val').innerText = hum;
+            
+            const battElem = card.querySelector('.batt-val');
+            battElem.innerText = `🔋 ${batt}%`;
+            if (batt < 20) battElem.classList.add('batt-low');
+            else battElem.classList.remove('batt-low');
+
+            // Reset animacji "kropki"
+            const dot = card.querySelector('.updated');
+            dot.style.animation = 'none';
+            dot.offsetHeight; /* trigger reflow */
+            dot.style.animation = 'pulse 2s infinite';
+        }
+
+        function log(msg) {
+            document.getElementById('log').innerText = msg;
         }
     </script>
 </body>
