@@ -16,7 +16,7 @@
 </head>
 <body>
 
-    <button id="scanBtn">START SCANNING 3</button>
+    <button id="scanBtn">START SCANNING 4</button>
 
     <div id="display" style="display:none;">
         <div class="data-box">
@@ -60,10 +60,7 @@
                 // ZMIANA STRATEGII: Filtrujemy GŁÓWNIE po serwisie 0x181a.
                 // To wymusi na Chrome szukanie pakietów z danymi, a nie tylko nazwą.
                 const device = await navigator.bluetooth.requestDevice({
-                    filters: [
-                        { services: [0x181a] } 
-                    ],
-                    // Dla pewności dodajemy też prefix nazwy jako alternatywny filtr w OR
+                    acceptAllDevices: true, 
                     optionalServices: [0x181a]
                 });
 
