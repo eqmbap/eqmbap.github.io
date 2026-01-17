@@ -16,7 +16,7 @@
 </head>
 <body>
 
-    <button id="scanBtn">START SCANNING 2</button>
+    <button id="scanBtn">START SCANNING 3</button>
 
     <div id="display" style="display:none;">
         <div class="data-box">
@@ -36,83 +36,99 @@
 
     <div id="log"></div>
 
-    <script>
+<script>
         const scanBtn = document.getElementById('scanBtn');
         const logDiv = document.getElementById('log');
 
+        // Funkcja pomocnicza do wyświetlania bajtów
+        function buf2hex(buffer) { 
+            return [...new Uint8Array(buffer)]
+                .map(x => x.toString(16).padStart(2, '0'))
+                .join(' ');
+        }
+
         const log = (msg) => {
             const time = new Date().toLocaleTimeString();
+            // Logujemy na górze, żeby nie przewijać
             logDiv.innerHTML = `[${time}] ${msg}<br>` + logDiv.innerHTML;
         };
 
         scanBtn.addEventListener('click', async () => {
             try {
-                log('Inicjalizacja skanowania...');
+                log('Startowanie...');
                 
-                // POPRAWKA: Musimy jawnie poprosić o dostęp do serwisu 0x181a w optionalServices.
-                // Bez tego 'serviceData' będzie puste!
+                // ZMIANA STRATEGII: Filtrujemy GŁÓWNIE po serwisie 0x181a.
+                // To wymusi na Chrome szukanie pakietów z danymi, a nie tylko nazwą.
                 const device = await navigator.bluetooth.requestDevice({
                     filters: [
-                        { namePrefix: 'ATC' },      // Często po flashu nazwa to ATC_xxxx
-                        { namePrefix: 'LYWSD03' },  // Lub oryginalna
-                        { services: [0x181a] }      // Lub po serwisie
+                        { services: [0x181a] } 
                     ],
-                    optionalServices: [0x181a]      // <--- KLUCZOWE DLA ODPOWIEDZI
+                    // Dla pewności dodajemy też prefix nazwy jako alternatywny filtr w OR
+                    optionalServices: [0x181a]
                 });
 
-                log(`Połączono z obiektem JS: ${device.name}`);
-                log(`ID: ${device.id}`);
+                log(`Wybrano: ${device.name} (ID: ${device.id.slice(0,5)}...)`);
                 
                 document.getElementById('display').style.display = 'block';
                 scanBtn.style.display = 'none';
 
-                // Nasłuchiwanie
                 device.addEventListener('advertisementreceived', (event) => {
-                    // Logujmy raz na jakiś czas, żeby widzieć że żyje
-                    // console.log(event.serviceData); 
-
-                    // Szukamy UUID 0x181a (Environmental Sensing)
-                    // Chrome może zwracać UUID w formie 16-bit lub pełnej 128-bit
-                    let data = event.serviceData.get(event.serviceUuids.find(uuid => uuid.includes('181a')));
+                    // DIAGNOSTYKA: Wypiszmy wszystko co przyszło
+                    // log(`Odebrano ramkę! RSSI: ${event.rssi}`);
                     
-                    if (data) {
-                        parseATC1441(data);
-                    } else {
-                        // Jeśli tu wpada, to znaczy że device nadaje, ale nie widzimy payloadu
-                        // Może nadawać w formacie Xiaomi (0xfe95)?
-                        console.warn("Odebrano pakiet, ale brak danych dla 0x181a");
-                    }
+                    const serviceData = event.serviceData;
+
+                    // Iterujemy po wszystkich serwisach w ramce
+                    serviceData.forEach((value, key) => {
+                        // key to UUID (zazwyczaj długi string)
+                        if (key.includes('181a')) {
+                            // log(`Mamy 181a! RAW: ${buf2hex(value.buffer)}`);
+                            parseATC1441(value);
+                        } else {
+                            log(`Inny serwis: ${key}`);
+                        }
+                    });
                 });
 
-                // Start nasłuchiwania
                 await device.watchAdvertisements();
-                log('Nasłuchiwanie aktywne. Czekam na ramki...');
+                log('Zarejestrowano Watcher. Czekam na dane...');
 
             } catch (error) {
-                log(`Błąd: ${error}`);
-                console.error(error);
+                log(`BŁĄD: ${error}`);
             }
         });
 
         function parseATC1441(dataView) {
-            // Format ATC1441 (Little Endian vs Big Endian to częsta pułapka)
-            // Firmware pvvx w trybie ATC zazwyczaj wysyła:
-            // Byte 6-7: Temp (Int16 Big Endian)
-            // Byte 8: Humi (Uint8)
-            // Byte 9: Batt (Uint8)
-            // Byte 10-11: Volt (Uint16 Big Endian)
+            // Oczekujemy min. 13 bajtów w formacie ATC1441
+            // Bajt 0-5: MAC
+            // Bajt 6-7: Temp
+            // Bajt 8: Humi
+            // Bajt 9: Batt
+            // Bajt 10-11: Volt
+            
+            if (dataView.byteLength < 10) {
+                log(`Za krótki pakiet: ${dataView.byteLength}B`);
+                return;
+            }
 
-            if (dataView.byteLength < 10) return;
+            try {
+                // Konwersja Big Endian (false w drugim argumencie)
+                const tempRaw = dataView.getInt16(6, false); 
+                const temp = tempRaw / 10;
+                
+                const hum = dataView.getUint8(8);
+                const batt = dataView.getUint8(9);
+                const volt = dataView.getUint16(10, false);
 
-            // Sprawdzamy czy magic bytes się zgadzają, albo po prostu rzutujemy na pałę
-            // W JS DataView.getInt16(offset, littleEndian) -> false = Big Endian
-            const tempRaw = dataView.getInt16(6, false); 
-            const temp = tempRaw / 10;
-            const hum = dataView.getUint8(8);
-            const batt = dataView.getUint8(9);
-            const volt = dataView.getUint16(10, false);
+                // Aktualizacja UI
+                updateUI(temp, hum, batt, volt);
+                
+                // Opcjonalnie: loguj raz na jakiś czas dla pewności
+                // log(`Odczyt: ${temp}°C / ${hum}%`);
 
-            updateUI(temp, hum, batt, volt);
+            } catch (e) {
+                log(`Błąd parsowania: ${e}`);
+            }
         }
 
         function updateUI(temp, hum, batt, volt) {
